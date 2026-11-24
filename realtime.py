@@ -28,9 +28,23 @@ class Hub:
         users = {client.user_id for client in self.clients if client.room_id == room_id}
         await self.publish({"type": "presence", "room_id": room_id, "count": len(users)}, room_id=room_id)
 
+    async def disconnect_user(self, user_id):
+        clients = [client for client in self.clients if client.user_id == user_id]
+        self.clients.difference_update(clients)
+        await asyncio.gather(*(self._close(client) for client in clients))
+
+    @staticmethod
+    async def _close(client):
+        try:
+            async with client.send_lock:
+                await client.socket.close(code=4001)
+        except (WebSocketDisconnect, RuntimeError, OSError):
+            pass
+
     async def _send(self, client, event):
         try:
             async with client.send_lock:
-                await client.socket.send_json(event)
+                if client in self.clients:
+                    await client.socket.send_json(event)
         except (WebSocketDisconnect, RuntimeError, OSError):
             self.clients.discard(client)

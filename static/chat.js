@@ -8,22 +8,26 @@ const state = {
   retry: 750,
   sending: false,
   noticeRequest: 0,
+  roomsRequest: 0,
+  historyDirty: false,
 };
 const timeFormat = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" });
 const dateFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "short" });
 
-async function api(url, body) {
-  const options = body ? {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  } : {};
+async function api(url, body, method = body ? "POST" : "GET") {
+  const options = {
+    method,
+    ...(body && {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  };
   const response = await fetch(url, options);
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(typeof error.detail === "string" ? error.detail : "Не удалось выполнить запрос");
   }
-  return response.json();
+  return response.status === 204 ? null : response.json();
 }
 
 function element(tag, className, value) {
@@ -76,17 +80,31 @@ function openApp(user) {
   $("app").hidden = false;
 
   const previous = localStorage.getItem("campus.room");
-  selectRoom(state.rooms.find((room) => room.id === previous)?.id ?? state.rooms[0].id);
+  selectRoom(state.rooms.find((room) => room.id === previous)?.id ?? state.rooms[0]?.id);
   showJoinDialog();
   refreshNotices();
   connect();
 }
 
 function selectRoom(roomId) {
-  if (state.selection?.roomId === roomId) return;
+  if (state.selection && state.selection.roomId === roomId) return;
 
   const room = state.rooms.find((item) => item.id === roomId);
-  if (!room) return;
+  $("presence").hidden = !room;
+  $("composer-area").hidden = !room;
+  $("open-invite").hidden = !room?.can_invite;
+  $("open-delete").hidden = !room?.can_invite;
+  if (!room) {
+    state.selection = null;
+    localStorage.removeItem("campus.room");
+    $("room-title").textContent = "Чаты кампуса";
+    $("room-description").textContent = "";
+    $("messages").replaceChildren();
+    $("older").hidden = true;
+    $("empty").hidden = false;
+    $("empty").textContent = "У вас пока нет чатов. Создайте чат или откройте приглашение.";
+    return;
+  }
   const selection = { roomId, messages: new Map(), hasOlder: false, awaitingPresence: false };
   state.selection = selection;
   localStorage.setItem("campus.room", roomId);
@@ -97,7 +115,6 @@ function selectRoom(roomId) {
   $("rooms").querySelector('[aria-current="true"]').scrollIntoView({ block: "nearest", inline: "nearest" });
   $("room-title").textContent = room.title;
   $("room-description").textContent = room.description;
-  $("open-invite").hidden = !room.can_invite;
   $("chat-error").textContent = "";
   $("message").value = state.drafts.get(roomId)?.text ?? "";
   $("messages").replaceChildren();
@@ -116,7 +133,7 @@ function setPresence(text, connected = false) {
 }
 
 function subscribe() {
-  if (state.socket?.readyState !== WebSocket.OPEN) return false;
+  if (!state.selection || state.socket?.readyState !== WebSocket.OPEN) return false;
   state.selection.awaitingPresence = true;
   state.socket.send(state.selection.roomId);
   return true;
@@ -131,18 +148,22 @@ function connect() {
   socket.addEventListener("open", () => {
     state.retry = 750;
     subscribe();
-    refreshNotices();
-    refreshRooms().catch(() => {});
+    syncContent();
   });
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
+    if (event.code === 4001) {
+      location.reload();
+      return;
+    }
     setPresence("Переподключение…");
+    refreshRooms().catch(() => {});
     setTimeout(connect, state.retry);
     state.retry = Math.min(state.retry * 2, 8000);
   });
   socket.addEventListener("message", (event) => {
     const data = JSON.parse(event.data);
     const selection = state.selection;
-    if (data.type === "presence" && data.room_id === selection.roomId) {
+    if (data.type === "presence" && data.room_id === selection?.roomId) {
       setPresence(`В чате: ${data.count}`, true);
       if (selection.awaitingPresence) {
         selection.awaitingPresence = false;
@@ -150,12 +171,16 @@ function connect() {
       }
     }
     if (data.type === "message") receiveMessage(data.message);
-    if (data.type === "room_available") addRoom(data.room);
+    if (data.type === "room_available") {
+      addRoom(data.room);
+      refreshRooms().catch(() => {});
+    }
     if (data.type === "notification") {
       showSystemNotice(data.message);
       refreshNotices();
     }
     if (data.type === "notifications_changed") refreshNotices();
+    if (data.type === "content_changed") syncContent();
   });
 }
 
@@ -164,13 +189,72 @@ function messageUrl(roomId) {
 }
 
 async function refreshRooms() {
-  const { rooms } = await api("/api/bootstrap");
+  const request = ++state.roomsRequest;
+  const { user, rooms } = await api("/api/bootstrap");
+  if (request !== state.roomsRequest) return false;
+  if (!user) {
+    location.reload();
+    return false;
+  }
+  const roomIds = new Set(rooms.map((room) => room.id));
+  state.rooms = state.rooms.filter((room) => roomIds.has(room.id));
+  for (const button of [...$("rooms").children]) {
+    if (!roomIds.has(button.dataset.roomId)) {
+      state.drafts.delete(button.dataset.roomId);
+      button.remove();
+    }
+  }
   rooms.forEach(addRoom);
+  const reloadHistory = state.historyDirty;
+  state.historyDirty = false;
+  if (!roomIds.has(state.selection?.roomId)) {
+    selectRoom(state.rooms[0]?.id);
+  } else if (reloadHistory) {
+    const selection = { ...state.selection, messages: new Map(), hasOlder: false };
+    state.selection = selection;
+    $("older").disabled = false;
+    renderMessages(selection);
+    loadLatest(selection);
+  }
+  return true;
+}
+
+async function syncContent() {
+  state.historyDirty = true;
+  refreshNotices();
+  try {
+    await refreshRooms();
+  } catch {
+    $("chat-error").textContent = "Не удалось обновить чаты.";
+  }
 }
 
 const createRoomForm = $("create-room-form");
 let roomRequestId;
 let shareRequest;
+let deleteRoomId;
+
+$("open-delete").addEventListener("click", () => {
+  deleteRoomId = state.selection.roomId;
+  const { title } = state.rooms.find((room) => room.id === deleteRoomId);
+  $("delete-room-summary").textContent = `Чат «${title}», его переписка и уведомления будут удалены у всех участников.`;
+  $("delete-room-error").textContent = "";
+  $("delete-room-dialog").showModal();
+});
+$("delete-room").addEventListener("click", async () => {
+  const button = $("delete-room");
+  button.disabled = true;
+  $("delete-room-error").textContent = "";
+  try {
+    await api(`/api/rooms/${encodeURIComponent(deleteRoomId)}`, undefined, "DELETE");
+    $("delete-room-dialog").close();
+    syncContent();
+  } catch (error) {
+    $("delete-room-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 
 $("new-room").addEventListener("click", () => {
   $("create-room-error").textContent = "";
@@ -269,7 +353,7 @@ window.addEventListener("hashchange", () => {
 
 function receiveMessage(message) {
   const selection = state.selection;
-  if (selection.roomId !== message.room_id || selection.messages.has(message.id)) return;
+  if (selection?.roomId !== message.room_id || selection.messages.has(message.id)) return;
 
   const timeline = $("timeline");
   const nearBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 90;
@@ -406,6 +490,7 @@ async function openNotice(roomId, messageId) {
       return;
     }
   }
+  if (!state.rooms.some((room) => room.id === roomId)) return;
   selectRoom(roomId);
   markRead(messageId);
 }
@@ -508,7 +593,7 @@ $("composer").addEventListener("submit", async (event) => {
     receiveMessage(message);
     if (state.drafts.get(selection.roomId) === draft) {
       state.drafts.delete(selection.roomId);
-      if (selection.roomId === state.selection.roomId) input.value = "";
+      if (selection.roomId === state.selection?.roomId) input.value = "";
     }
   } catch (error) {
     if (selection === state.selection) $("chat-error").textContent = error.message;

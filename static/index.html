@@ -37,6 +37,7 @@
         <div class="chat-actions">
           <span class="status" id="presence" role="status">Подключение…</span>
           <button class="secondary invite-trigger" id="open-invite" type="button" aria-label="Пригласить по ссылке" aria-haspopup="dialog" hidden>Пригласить</button>
+          <button class="secondary danger-secondary" id="open-delete" type="button" aria-label="Удалить чат" aria-haspopup="dialog" hidden>Удалить</button>
           <button class="secondary notification-trigger" id="open-notifications" type="button" aria-haspopup="dialog">
             <span class="notification-label">Уведомления</span>
             <span class="bell" aria-hidden="true"></span>
@@ -49,7 +50,7 @@
         <p class="empty" id="empty">Загружаем сообщения…</p>
         <ol class="messages" id="messages" aria-label="Сообщения чата"></ol>
       </div>
-      <footer class="composer-area">
+      <footer class="composer-area" id="composer-area">
         <p class="inline-error" id="chat-error" role="alert"></p>
         <form class="composer" id="composer">
           <label class="visually-hidden" for="message">Сообщение</label>
@@ -78,6 +79,23 @@
     <p class="inline-error notice-error" id="notice-error" role="alert"></p>
     <p class="notification-empty" id="notice-empty">Уведомлений пока нет.</p>
     <ol id="notice-list" class="notification-list"></ol>
+  </dialog>
+
+  <dialog id="delete-room-dialog" class="room-dialog" aria-labelledby="delete-room-title">
+    <header class="notification-header">
+      <h2 id="delete-room-title">Удалить чат?</h2>
+      <form method="dialog">
+        <button type="submit" class="secondary close-panel" aria-label="Закрыть">×</button>
+      </form>
+    </header>
+    <div class="room-dialog-body">
+      <p id="delete-room-summary"></p>
+      <p class="inline-error" id="delete-room-error" role="alert"></p>
+      <div class="dialog-actions">
+        <form method="dialog"><button class="secondary" type="submit" autofocus>Отмена</button></form>
+        <button class="primary" id="delete-room" type="button">Удалить чат</button>
+      </div>
+    </div>
   </dialog>
 
   <dialog id="create-room-dialog" class="room-dialog" aria-labelledby="create-room-title">

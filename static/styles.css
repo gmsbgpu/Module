@@ -164,6 +164,7 @@ h1, h2, p { margin: 0; }
 .secondary { border-color: var(--control-line); background: var(--surface); color: inherit; }
 .secondary:hover:enabled { background: var(--canvas); }
 .invite-trigger { color: var(--accent); }
+.danger-secondary { color: var(--accent); font-size: .86rem; }
 .notification-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: .86rem; }
 .bell { display: none; }
 .badge {
@@ -206,6 +207,7 @@ h1, h2, p { margin: 0; }
 .room-dialog label { font-size: .89rem; font-weight: 650; }
 .room-dialog textarea { resize: vertical; }
 .room-dialog-body .primary { justify-self: end; }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: 8px; }
 .notification-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
 .notification-header h2 { font-size: 1.17rem; }
 .close-panel { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; font-size: 1.25rem; line-height: 1; }
@@ -279,7 +281,7 @@ h1, h2, p { margin: 0; }
   .conversation { flex: 1; }
   .chat-header { padding-top: 10px; padding-bottom: 10px; gap: 8px; }
   .chat-actions { gap: 5px; max-width: 66%; }
-  .invite-trigger { padding: 7px; font-size: .78rem; }
+  .invite-trigger, .danger-secondary { padding: 7px; font-size: .78rem; }
   .chat-header h1 { font-size: 1.08rem; }
   .chat-header p, .keyboard-hint { display: none; }
   .status { font-size: .72rem; }

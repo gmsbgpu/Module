@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Администрирование · Кампус БГПУ</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/admin.css">
+  <script src="/static/admin.js" defer></script>
+</head>
+<body>
+  <main class="welcome" id="admin-welcome">
+    <section class="welcome-card">
+      <span class="brand-mark" aria-hidden="true">Б</span>
+      <h1>Вход в админку</h1>
+      <form id="admin-login">
+        <label for="admin-key">Ключ администратора</label>
+        <input type="password" id="admin-key" name="admin-key" maxlength="100" required>
+        <p class="inline-error" id="login-error" role="alert"></p>
+        <button class="primary" type="submit">Войти</button>
+      </form>
+      <a class="admin-back" href="/">Вернуться к чатам</a>
+    </section>
+  </main>
+
+  <main class="admin-shell" id="admin-shell" hidden>
+    <header class="admin-header">
+      <div class="admin-brand">
+        <span class="brand-mark" aria-hidden="true">Б</span>
+        <div><h1>Администрирование</h1><p>Кампус БГПУ</p></div>
+      </div>
+      <div class="admin-header-actions">
+        <a class="admin-back" href="/">К чатам</a>
+        <button class="secondary" id="admin-logout" type="button">Выйти</button>
+      </div>
+    </header>
+    <nav class="admin-nav" aria-label="Разделы администрирования">
+      <button type="button" data-kind="rooms" aria-pressed="true">Чаты</button>
+      <button type="button" data-kind="messages" aria-pressed="false">Сообщения</button>
+      <button type="button" data-kind="notifications" aria-pressed="false">Уведомления</button>
+      <button type="button" data-kind="users" aria-pressed="false">Профили</button>
+    </nav>
+    <section id="admin-content" aria-label="Записи выбранного раздела">
+      <p id="admin-error" class="inline-error" role="alert"></p>
+      <p id="admin-status" class="admin-status" role="status"></p>
+      <ul id="admin-list" class="admin-list"></ul>
+      <div class="admin-pagination">
+        <button class="secondary" id="admin-prev" type="button" disabled>Назад</button>
+        <button class="secondary" id="admin-next" type="button" disabled>Далее</button>
+      </div>
+    </section>
+  </main>
+
+  <dialog class="room-dialog" id="admin-confirm" aria-labelledby="admin-confirm-title">
+    <header class="notification-header">
+      <h2 id="admin-confirm-title">Удалить запись?</h2>
+    </header>
+    <div class="room-dialog-body">
+      <strong id="admin-confirm-name"></strong>
+      <p id="admin-confirm-summary"></p>
+      <p id="admin-confirm-error" class="inline-error" role="alert"></p>
+      <div class="dialog-actions">
+        <form method="dialog"><button class="secondary" type="submit" autofocus>Отмена</button></form>
+        <button class="primary" id="admin-delete" type="button">Удалить</button>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>

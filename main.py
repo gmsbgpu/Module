@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 
+from admin import AdminAuth, router as admin_router
 from realtime import Client, Hub
 from storage import Storage
 
@@ -21,10 +22,14 @@ hub = Hub()
 @asynccontextmanager
 async def lifespan(_app):
     storage.initialize()
+    _app.state.admin = AdminAuth.load(storage.path.with_name(storage.path.name + ".admin-key"))
     yield
 
 
 app = FastAPI(title="Кампус БГПУ", lifespan=lifespan)
+app.state.storage = storage
+app.state.hub = hub
+app.include_router(admin_router)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 ProfileToken = Annotated[str | None, Cookie(alias=COOKIE)]
@@ -111,6 +116,14 @@ async def invite(room_id: str, response: Response, token: ProfileToken = None):
     return {"token": invite_token}
 
 
+@app.delete("/api/rooms/{room_id}", status_code=204)
+async def delete_room(room_id: str, token: ProfileToken = None):
+    user = require_user(token)
+    if not storage.delete_room(room_id, owner_id=user["id"]):
+        raise HTTPException(404, "Чат недоступен для удаления")
+    await hub.publish({"type": "content_changed"})
+
+
 @app.post("/api/rooms/join")
 async def join_room(data: InviteInput, token: ProfileToken = None):
     user = require_user(token)
@@ -176,6 +189,9 @@ async def events(socket: WebSocket):
         return
 
     await socket.accept()
+    if storage.find_user(socket.cookies.get(COOKIE)) is None:
+        await socket.close(code=4001)
+        return
     client = Client(socket, user["id"])
     hub.clients.add(client)
     try:

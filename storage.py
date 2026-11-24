@@ -25,6 +25,30 @@ ROOM_SELECT = """
     WHERE (p.room_id IS NULL OR m.user_id IS NOT NULL)
 """
 
+ADMIN_LISTS = {
+    "rooms": """
+        SELECT r.id, r.title,
+               CASE WHEN p.room_id IS NULL THEN 'Общий чат' ELSE 'Владелец: ' || u.name END AS detail,
+               r.description AS text
+        FROM rooms r LEFT JOIN private_rooms p ON p.room_id = r.id LEFT JOIN users u ON u.id = p.owner_id
+        ORDER BY r.rowid DESC
+    """,
+    "messages": """
+        SELECT m.id, u.name AS title, r.title || ' · #' || m.id AS detail, m.text
+        FROM messages m JOIN users u ON u.id = m.sender_id JOIN rooms r ON r.id = m.room_id
+        ORDER BY m.id DESC
+    """,
+    "notifications": """
+        SELECT n.user_id || '-' || n.message_id AS id, u.name AS title,
+               r.title || ' · #' || m.id || CASE WHEN n.read_at IS NULL
+                   THEN ' · непрочитано' ELSE ' · прочитано' END AS detail, m.text
+        FROM notifications n JOIN users u ON u.id = n.user_id
+        JOIN messages m ON m.id = n.message_id JOIN rooms r ON r.id = m.room_id
+        ORDER BY n.message_id DESC, n.user_id DESC
+    """,
+    "users": "SELECT id, name AS title, 'Профиль #' || id AS detail FROM users ORDER BY id DESC",
+}
+
 
 class Storage:
     def __init__(self, path: Path):
@@ -82,16 +106,33 @@ class Storage:
                 );
                 CREATE INDEX IF NOT EXISTS notifications_unread
                     ON notifications(user_id, read_at, message_id);
+                CREATE INDEX IF NOT EXISTS notifications_message ON notifications(message_id);
+                CREATE INDEX IF NOT EXISTS room_members_user ON room_members(user_id);
+                CREATE TABLE IF NOT EXISTS id_counters (
+                    name TEXT PRIMARY KEY,
+                    last_id INTEGER NOT NULL
+                );
             """)
-            db.executemany("INSERT OR IGNORE INTO rooms VALUES (?, ?, ?)", ROOMS)
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("PRAGMA user_version").fetchone()[0] == 0:
+                db.executemany("INSERT OR IGNORE INTO rooms VALUES (?, ?, ?)", ROOMS)
+                db.execute("PRAGMA user_version = 1")
+            db.execute("INSERT OR IGNORE INTO id_counters SELECT 'users', COALESCE(MAX(id), 0) FROM users")
+            db.execute("INSERT OR IGNORE INTO id_counters SELECT 'messages', COALESCE(MAX(id), 0) FROM messages")
+
+    @staticmethod
+    def _next_id(db, name):
+        return db.execute(
+            "UPDATE id_counters SET last_id = last_id + 1 WHERE name = ? RETURNING last_id", (name,)
+        ).fetchone()[0]
 
     def create_user(self, name):
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self.connect() as db:
             user = db.execute(
-                "INSERT INTO users(name, token_hash) VALUES (?, ?) RETURNING id, name",
-                (name, token_hash),
+                "INSERT INTO users(id, name, token_hash) VALUES (?, ?, ?) RETURNING id, name",
+                (self._next_id(db, "users"), name, token_hash),
             ).fetchone()
         return dict(user), token
 
@@ -169,11 +210,11 @@ class Storage:
         with self.connect() as db:
             inserted = db.execute(
                 """
-                INSERT INTO messages(room_id, sender_id, request_id, text) VALUES (?, ?, ?, ?)
+                INSERT INTO messages(id, room_id, sender_id, request_id, text) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(sender_id, request_id) DO NOTHING
                 RETURNING id
                 """,
-                (room_id, sender_id, request_id, text),
+                (self._next_id(db, "messages"), room_id, sender_id, request_id, text),
             ).fetchone()
             message = db.execute(
                 MESSAGE_SELECT + " WHERE m.sender_id = ? AND m.request_id = ?", (sender_id, request_id)
@@ -226,3 +267,55 @@ class Storage:
                 db.execute(update, (user_id,))
             else:
                 db.execute(update + " AND message_id = ?", (user_id, message_id))
+
+    def admin_list(self, kind, offset, limit=50):
+        with self.connect() as db:
+            rows = db.execute(ADMIN_LISTS[kind] + " LIMIT ? OFFSET ?", (limit + 1, offset)).fetchall()
+        return {"items": [dict(row) for row in rows[:limit]], "has_more": len(rows) > limit}
+
+    @staticmethod
+    def _delete_messages(db, *, room_id=None, sender_id=None, message_id=None):
+        if room_id is not None:
+            clause, value = "room_id = ?", room_id
+        elif sender_id is not None:
+            clause, value = "sender_id = ?", sender_id
+        else:
+            clause, value = "id = ?", message_id
+        db.execute("DELETE FROM notifications WHERE message_id IN (SELECT id FROM messages WHERE " + clause + ")", (value,))
+        return db.execute("DELETE FROM messages WHERE " + clause, (value,)).rowcount
+
+    def _delete_room(self, db, room_id):
+        self._delete_messages(db, room_id=room_id)
+        db.execute("DELETE FROM room_members WHERE room_id = ?", (room_id,))
+        db.execute("DELETE FROM private_rooms WHERE room_id = ?", (room_id,))
+        return bool(db.execute("DELETE FROM rooms WHERE id = ?", (room_id,)).rowcount)
+
+    def delete_room(self, room_id, owner_id=None):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if owner_id is not None and not db.execute(
+                "SELECT 1 FROM private_rooms WHERE room_id = ? AND owner_id = ?", (room_id, owner_id)
+            ).fetchone():
+                return False
+            return self._delete_room(db, room_id)
+
+    def delete_message(self, message_id):
+        with self.connect() as db:
+            return bool(self._delete_messages(db, message_id=message_id))
+
+    def delete_notification(self, user_id, message_id):
+        with self.connect() as db:
+            return bool(db.execute(
+                "DELETE FROM notifications WHERE user_id = ? AND message_id = ?", (user_id, message_id)
+            ).rowcount)
+
+    def delete_user(self, user_id):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            owned = db.execute("SELECT room_id FROM private_rooms WHERE owner_id = ?", (user_id,)).fetchall()
+            for row in owned:
+                self._delete_room(db, row["room_id"])
+            self._delete_messages(db, sender_id=user_id)
+            db.execute("DELETE FROM notifications WHERE user_id = ?", (user_id,))
+            db.execute("DELETE FROM room_members WHERE user_id = ?", (user_id,))
+            return bool(db.execute("DELETE FROM users WHERE id = ?", (user_id,)).rowcount)
