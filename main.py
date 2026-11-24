@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import Cookie, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 from realtime import Client, Hub
 from storage import Storage
@@ -37,6 +37,10 @@ class ProfileInput(BaseModel):
 class MessageInput(BaseModel):
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
     request_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+
+
+class ReadInput(BaseModel):
+    message_id: Annotated[int | None, Field(gt=0, le=2**63 - 1)] = None
 
 
 def require_user(token):
@@ -96,8 +100,24 @@ async def create_message(room_id: str, data: MessageInput, token: ProfileToken =
     if message["room_id"] != room_id or message["text"] != data.text:
         raise HTTPException(409, "Идентификатор отправки уже использован")
     if created:
+        await hub.publish({"type": "notification", "message": message}, exclude_user_id=user["id"])
         await hub.publish({"type": "message", "message": message}, room_id=room_id)
     return message
+
+
+@app.get("/api/notifications")
+async def notifications(response: Response, token: ProfileToken = None):
+    user = require_user(token)
+    response.headers["Cache-Control"] = "no-store"
+    return storage.notifications(user["id"])
+
+
+@app.post("/api/notifications/read")
+async def mark_notifications_read(data: ReadInput, token: ProfileToken = None):
+    user = require_user(token)
+    storage.mark_notifications_read(user["id"], data.message_id)
+    await hub.publish({"type": "notifications_changed"}, user_id=user["id"])
+    return storage.notifications(user["id"])
 
 
 @app.websocket("/ws")

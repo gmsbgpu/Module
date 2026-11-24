@@ -33,6 +33,11 @@
         </div>
         <div class="chat-actions">
           <span class="status" id="presence" role="status">Подключение…</span>
+          <button class="secondary notification-trigger" id="open-notifications" type="button" aria-haspopup="dialog">
+            <span class="notification-label">Уведомления</span>
+            <span class="bell" aria-hidden="true"></span>
+            <span class="badge" id="notice-count" aria-hidden="true" hidden></span>
+          </button>
         </div>
       </header>
       <div class="timeline" id="timeline">
@@ -51,6 +56,25 @@
       </footer>
     </section>
   </main>
+
+  <dialog id="notifications" class="notification-panel" aria-labelledby="notifications-title">
+    <header class="notification-header">
+      <h2 id="notifications-title">Уведомления</h2>
+      <form method="dialog">
+        <button type="submit" class="secondary close-panel" aria-label="Закрыть уведомления">×</button>
+      </form>
+    </header>
+    <div class="notification-settings">
+      <button class="secondary" id="system-notices" type="button">Включить системные</button>
+      <p id="system-status" role="status"></p>
+    </div>
+    <div class="notification-toolbar">
+      <button class="text-button" id="read-all" type="button" disabled>Прочитать все</button>
+    </div>
+    <p class="inline-error notice-error" id="notice-error" role="alert"></p>
+    <p class="notification-empty" id="notice-empty">Уведомлений пока нет.</p>
+    <ol id="notice-list" class="notification-list"></ol>
+  </dialog>
 
   <main class="welcome" id="welcome">
     <section class="welcome-card">

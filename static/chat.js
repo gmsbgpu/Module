@@ -7,6 +7,7 @@ const state = {
   socket: null,
   retry: 750,
   sending: false,
+  noticeRequest: 0,
 };
 const timeFormat = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" });
 const dateFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "short" });
@@ -55,6 +56,7 @@ function openApp(user) {
   }
   const previous = localStorage.getItem("campus.room");
   selectRoom(state.rooms.find((room) => room.id === previous)?.id ?? state.rooms[0].id);
+  refreshNotices();
   connect();
 }
 
@@ -104,6 +106,7 @@ function connect() {
   socket.addEventListener("open", () => {
     state.retry = 750;
     subscribe();
+    refreshNotices();
   });
   socket.addEventListener("close", () => {
     setPresence("Переподключение…");
@@ -121,6 +124,11 @@ function connect() {
       }
     }
     if (data.type === "message") receiveMessage(data.message);
+    if (data.type === "notification") {
+      showSystemNotice(data.message);
+      refreshNotices();
+    }
+    if (data.type === "notifications_changed") refreshNotices();
   });
 }
 
@@ -151,9 +159,10 @@ async function loadLatest(selection) {
     if (!overlaps && data.has_older) {
       for (const id of previousIds) selection.messages.delete(id);
     }
-    if (!overlaps || !previousIds.size) selection.hasOlder = data.has_older;
+    if (!overlaps) selection.hasOlder = data.has_older;
     for (const message of data.messages) selection.messages.set(message.id, message);
     renderMessages(selection);
+    if ($("chat-error").textContent === "Не удалось загрузить историю.") $("chat-error").textContent = "";
     $("timeline").scrollTop = $("timeline").scrollHeight;
   } catch {
     if (selection !== state.selection || selection.latestRequest !== request) return;
@@ -211,6 +220,127 @@ function renderMessage(message) {
   row.append(card);
   return row;
 }
+
+function renderNotices({ items, unread }) {
+  $("notice-count").hidden = unread === 0;
+  $("notice-count").textContent = unread > 99 ? "99+" : String(unread);
+  $("open-notifications").setAttribute("aria-label", unread ? `Уведомления, непрочитанных: ${unread}` : "Уведомления");
+  $("read-all").disabled = unread === 0;
+  $("notice-empty").hidden = items.length > 0;
+  $("notice-list").replaceChildren(...items.map((notice) => {
+    const row = element("li", "");
+    const button = element("button", notice.read_at ? "notice" : "notice unread");
+    button.type = "button";
+    const top = element("span", "notice-top");
+    const stamp = element("time", "", dateFormat.format(new Date(notice.created_at)));
+    stamp.dateTime = notice.created_at;
+    top.append(element("strong", "", notice.room_title), stamp);
+    button.append(top, element("span", "notice-preview", `${notice.sender_name}: ${notice.text}`));
+    if (!notice.read_at) button.append(element("span", "visually-hidden", "Непрочитанное уведомление"));
+    button.addEventListener("click", () => openNotice(notice.room_id, notice.message_id));
+    row.append(button);
+    return row;
+  }));
+}
+
+async function refreshNotices() {
+  const request = ++state.noticeRequest;
+  try {
+    const data = await api("/api/notifications");
+    if (request !== state.noticeRequest) return;
+    $("notice-error").textContent = "";
+    renderNotices(data);
+  } catch {
+    if (request === state.noticeRequest) $("notice-error").textContent = "Не удалось загрузить уведомления.";
+  }
+}
+
+async function markRead(messageId = null) {
+  try {
+    await api("/api/notifications/read", { message_id: messageId });
+    await refreshNotices();
+  } catch {
+    const error = $("notifications").open ? $("notice-error") : $("chat-error");
+    error.textContent = "Не удалось отметить уведомление как прочитанное.";
+  }
+}
+
+function openNotice(roomId, messageId) {
+  $("notifications").close();
+  selectRoom(roomId);
+  markRead(messageId);
+}
+
+function supportsSystemNotices() {
+  return window.isSecureContext && "Notification" in window;
+}
+
+function systemNoticesEnabled() {
+  return supportsSystemNotices() && Notification.permission === "granted"
+    && localStorage.getItem("campus.systemNotices") === "on";
+}
+
+function renderSystemSettings() {
+  const button = $("system-notices");
+  const supported = supportsSystemNotices();
+  const denied = supported && Notification.permission === "denied";
+  const enabled = systemNoticesEnabled();
+  button.disabled = !supported || denied;
+  button.textContent = enabled ? "Отключить системные" : "Включить системные";
+  if (!supported) {
+    $("system-status").textContent = "Системные уведомления доступны в поддерживаемом браузере на localhost или через HTTPS.";
+  } else if (denied) {
+    $("system-status").textContent = "Разрешите уведомления для этого сайта в настройках браузера.";
+  } else {
+    $("system-status").textContent = enabled
+      ? "Включены. Баннеры приходят, пока чат открыт."
+      : "Включите баннеры о новых сообщениях, пока чат открыт.";
+  }
+}
+
+function showSystemNotice(message) {
+  if (!systemNoticesEnabled()) return;
+  const room = state.rooms.find((item) => item.id === message.room_id);
+  if (!room) return;
+  const preview = Array.from(message.text);
+  const body = preview.length > 140 ? preview.slice(0, 139).join("") + "…" : message.text;
+  try {
+    const notice = new Notification(`Кампус БГПУ · ${room.title}`, {
+      body: `${message.sender_name}: ${body}`,
+      tag: `campus-message-${message.id}`,
+    });
+    notice.onclick = () => {
+      window.focus();
+      openNotice(message.room_id, message.id);
+      notice.close();
+    };
+  } catch {
+    $("system-status").textContent = "Браузер не смог показать системный баннер.";
+  }
+}
+
+$("open-notifications").addEventListener("click", () => {
+  renderSystemSettings();
+  $("notifications").showModal();
+  refreshNotices();
+});
+$("read-all").addEventListener("click", () => markRead());
+$("system-notices").addEventListener("click", async () => {
+  if (systemNoticesEnabled()) localStorage.removeItem("campus.systemNotices");
+  else {
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission === "granted") localStorage.setItem("campus.systemNotices", "on");
+    } catch {
+      $("system-status").textContent = "Не удалось запросить разрешение браузера.";
+      return;
+    }
+  }
+  renderSystemSettings();
+});
+window.addEventListener("focus", () => {
+  if ($("notifications").open) renderSystemSettings();
+});
 
 $("message").addEventListener("input", () => {
   state.drafts.set(state.selection.roomId, { text: $("message").value });

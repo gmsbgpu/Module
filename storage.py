@@ -53,6 +53,14 @@ class Storage:
                     UNIQUE (sender_id, request_id)
                 );
                 CREATE INDEX IF NOT EXISTS messages_room_id ON messages(room_id, id);
+                CREATE TABLE IF NOT EXISTS notifications (
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    message_id INTEGER NOT NULL REFERENCES messages(id),
+                    read_at TEXT,
+                    PRIMARY KEY (user_id, message_id)
+                );
+                CREATE INDEX IF NOT EXISTS notifications_unread
+                    ON notifications(user_id, read_at, message_id);
             """)
             db.executemany("INSERT OR IGNORE INTO rooms VALUES (?, ?, ?)", ROOMS)
 
@@ -103,4 +111,42 @@ class Storage:
             message = db.execute(
                 MESSAGE_SELECT + " WHERE m.sender_id = ? AND m.request_id = ?", (sender_id, request_id)
             ).fetchone()
+            if inserted:
+                db.execute(
+                    "INSERT INTO notifications(user_id, message_id) SELECT id, ? FROM users WHERE id != ?",
+                    (message["id"], sender_id),
+                )
         return dict(message), inserted is not None
+
+    def notifications(self, user_id):
+        with self.connect() as db:
+            rows = db.execute(
+                """
+                SELECT n.message_id, n.read_at, m.room_id, m.text, m.created_at,
+                       u.name AS sender_name, r.title AS room_title
+                FROM notifications AS n
+                JOIN messages AS m ON m.id = n.message_id
+                JOIN users AS u ON u.id = m.sender_id
+                JOIN rooms AS r ON r.id = m.room_id
+                WHERE n.user_id = ?
+                ORDER BY n.read_at IS NOT NULL, n.message_id DESC
+                LIMIT 50
+                """,
+                (user_id,),
+            ).fetchall()
+            unread = db.execute(
+                "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL", (user_id,)
+            ).fetchone()[0]
+        return {"items": [dict(row) for row in rows], "unread": unread}
+
+    def mark_notifications_read(self, user_id, message_id=None):
+        update = """
+            UPDATE notifications
+            SET read_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE user_id = ? AND read_at IS NULL
+        """
+        with self.connect() as db:
+            if message_id is None:
+                db.execute(update, (user_id,))
+            else:
+                db.execute(update + " AND message_id = ?", (user_id, message_id))
