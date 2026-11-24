@@ -16,12 +16,11 @@ class Hub:
     def __init__(self):
         self.clients: set[Client] = set()
 
-    async def publish(self, event, *, room_id=None, user_id=None, exclude_user_id=None):
+    async def publish(self, event, *, room_id=None, user_ids=None):
         recipients = [
             client for client in self.clients
             if (room_id is None or client.room_id == room_id)
-            and (user_id is None or client.user_id == user_id)
-            and client.user_id != exclude_user_id
+            and (user_ids is None or client.user_id in user_ids)
         ]
         await asyncio.gather(*(self._send(client, event) for client in recipients))
 

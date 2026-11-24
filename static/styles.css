@@ -60,7 +60,10 @@ h1, h2, p { margin: 0; }
   font-weight: 750;
 }
 .rooms { flex: 1; min-height: 0; overflow: auto; }
-.rooms h2 { color: #b9c7e3; font-size: .77rem; letter-spacing: .08em; text-transform: uppercase; margin: 0 9px 11px; }
+.room-nav-heading { display: flex; align-items: center; justify-content: space-between; gap: 5px; margin: 0 0 9px 9px; }
+.rooms h2 { color: #b9c7e3; font-size: .73rem; letter-spacing: .06em; text-transform: uppercase; }
+.new-room { border: 1px solid #495d86; border-radius: 7px; padding: 5px 7px; color: #edf2ff; background: #263556; font-size: .78rem; white-space: nowrap; }
+.new-room:hover { background: #36496f; }
 .room-button {
   display: flex;
   align-items: center;
@@ -78,6 +81,7 @@ h1, h2, p { margin: 0; }
 .room-button:hover { background: #202f4d; }
 .room-button[aria-current="true"] { background: #2c3e68; border-color: #405580; color: #fff; font-weight: 650; }
 .room-symbol { color: #9db4ef; font-size: 1.06rem; }
+.room-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile { padding: 17px 8px 0; margin-top: 16px; border-top: 1px solid #ffffff26; }
 .profile div { min-width: 0; }
 .profile strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -102,9 +106,11 @@ h1, h2, p { margin: 0; }
   padding: 22px 27px 20px;
   border-bottom: 1px solid var(--line);
 }
+.chat-header > div:first-child { min-width: 0; overflow-wrap: anywhere; }
 .chat-header h1 { font-size: 1.4rem; letter-spacing: -.025em; }
 .chat-header p { color: var(--muted); font-size: .89rem; margin-top: 4px; }
-.chat-actions { display: flex; align-items: center; gap: 10px; }
+.chat-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: end; gap: 10px; }
+.invite-trigger { font-size: .86rem; }
 .status {
   display: inline-flex;
   align-items: center;
@@ -134,7 +140,7 @@ h1, h2, p { margin: 0; }
 .message-text { margin-top: 4px; line-height: 1.42; font-size: .94rem; overflow-wrap: anywhere; white-space: pre-wrap; }
 .composer-area { padding: 13px 27px 14px; border-top: 1px solid var(--line); }
 .composer { display: flex; align-items: stretch; gap: 10px; }
-.composer textarea, .welcome input {
+.composer textarea, .welcome input, .room-dialog input, .room-dialog textarea {
   width: 100%;
   min-width: 0;
   padding: 10px 12px;
@@ -176,6 +182,24 @@ h1, h2, p { margin: 0; }
   box-shadow: 0 20px 75px #15213a45;
 }
 .notification-panel::backdrop { background: #18254554; }
+.room-dialog {
+  width: min(430px, calc(100vw - 24px));
+  max-width: none;
+  max-height: calc(100dvh - 24px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: inherit;
+  box-shadow: 0 20px 75px #15213a45;
+}
+.room-dialog::backdrop { background: #18254554; }
+.room-dialog-body { display: grid; gap: 9px; padding: 16px 18px 18px; }
+.room-dialog-body > p:not(.inline-error) { font-size: .88rem; line-height: 1.4; color: var(--muted); }
+.room-dialog-body > p:empty { display: none; }
+.room-dialog label { font-size: .89rem; font-weight: 650; }
+.room-dialog textarea { resize: vertical; }
+.room-dialog-body .primary { justify-self: end; }
 .notification-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
 .notification-header h2 { font-size: 1.17rem; }
 .close-panel { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; font-size: 1.25rem; line-height: 1; }
@@ -236,15 +260,18 @@ h1, h2, p { margin: 0; }
   .brand { padding: 0; }
   .brand-mark { width: 32px; height: 32px; flex-basis: 32px; font-size: 1rem; }
   .brand span:not(.brand-mark), .profile div span { display: none; }
-  .rooms { grid-row: 2; grid-column: 1 / -1; }
+  .rooms { grid-row: 2; grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; overflow: visible; }
   .rooms h2 { display: none; }
-  #rooms { display: flex; gap: 4px; }
-  .room-button { white-space: nowrap; width: auto; font-size: .79rem; padding: 7px; gap: 4px; }
+  .room-nav-heading { grid-column: 2; grid-row: 1; margin: 0; }
+  #rooms { grid-column: 1; grid-row: 1; display: flex; gap: 4px; overflow-x: auto; }
+  .room-button { flex: 0 0 auto; width: auto; max-width: 210px; font-size: .79rem; padding: 7px; gap: 4px; }
   .room-button + .room-button { margin-top: 0; }
   .profile { grid-row: 1; grid-column: 2; margin: 0; border: 0; padding: 0; align-self: center; justify-self: end; max-width: 100%; font-size: .82rem; }
   .profile .avatar { width: 26px; height: 26px; flex-basis: 26px; }
   .conversation { flex: 1; }
-  .chat-header { padding-top: 10px; padding-bottom: 10px; }
+  .chat-header { padding-top: 10px; padding-bottom: 10px; gap: 8px; }
+  .chat-actions { gap: 5px; max-width: 66%; }
+  .invite-trigger { padding: 7px; font-size: .78rem; }
   .chat-header h1 { font-size: 1.08rem; }
   .chat-header p, .keyboard-hint { display: none; }
   .status { font-size: .72rem; }

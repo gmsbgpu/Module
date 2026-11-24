@@ -28,6 +28,7 @@ app = FastAPI(title="Кампус БГПУ", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 ProfileToken = Annotated[str | None, Cookie(alias=COOKIE)]
+RequestId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 
 
 class ProfileInput(BaseModel):
@@ -36,7 +37,17 @@ class ProfileInput(BaseModel):
 
 class MessageInput(BaseModel):
     text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
-    request_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+    request_id: RequestId
+
+
+class RoomInput(BaseModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=60)]
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=160)] = ""
+    request_id: RequestId
+
+
+class InviteInput(BaseModel):
+    token: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{43}$")]
 
 
 class ReadInput(BaseModel):
@@ -50,8 +61,8 @@ def require_user(token):
     return user
 
 
-def require_room(room_id):
-    if not storage.room_exists(room_id):
+def require_room(room_id, user_id):
+    if not storage.can_access_room(room_id, user_id):
         raise HTTPException(404, "Чат не найден")
 
 
@@ -63,7 +74,8 @@ async def index():
 @app.get("/api/bootstrap")
 async def bootstrap(response: Response, token: ProfileToken = None):
     response.headers["Cache-Control"] = "no-store"
-    return {"user": storage.find_user(token), "rooms": storage.rooms()}
+    user = storage.find_user(token)
+    return {"user": user, "rooms": storage.rooms(user["id"] if user else None)}
 
 
 @app.post("/api/profile", status_code=201)
@@ -79,6 +91,36 @@ async def create_profile(data: ProfileInput, request: Request, response: Respons
     return user
 
 
+@app.post("/api/rooms", status_code=201)
+async def create_room(data: RoomInput, token: ProfileToken = None):
+    user = require_user(token)
+    room = storage.create_room(user["id"], data.title, data.description, data.request_id)
+    if room["title"] != data.title or room["description"] != data.description:
+        raise HTTPException(409, "Идентификатор запроса уже использован")
+    await hub.publish({"type": "room_available", "room": room}, user_ids={user["id"]})
+    return room
+
+
+@app.get("/api/rooms/{room_id}/invite")
+async def invite(room_id: str, response: Response, token: ProfileToken = None):
+    user = require_user(token)
+    invite_token = storage.room_invite(room_id, user["id"])
+    if invite_token is None:
+        raise HTTPException(404, "Приглашение недоступно")
+    response.headers["Cache-Control"] = "no-store"
+    return {"token": invite_token}
+
+
+@app.post("/api/rooms/join")
+async def join_room(data: InviteInput, token: ProfileToken = None):
+    user = require_user(token)
+    room = storage.join_room(data.token, user["id"])
+    if room is None:
+        raise HTTPException(404, "Приглашение не найдено. Проверьте ссылку.")
+    await hub.publish({"type": "room_available", "room": room}, user_ids={user["id"]})
+    return room
+
+
 @app.get("/api/rooms/{room_id}/messages")
 async def history(
     room_id: str,
@@ -86,8 +128,8 @@ async def history(
     token: ProfileToken = None,
     before: Annotated[int | None, Query(gt=0, le=2**63 - 1)] = None,
 ):
-    require_user(token)
-    require_room(room_id)
+    user = require_user(token)
+    require_room(room_id, user["id"])
     response.headers["Cache-Control"] = "no-store"
     return storage.history(room_id, before)
 
@@ -95,12 +137,12 @@ async def history(
 @app.post("/api/rooms/{room_id}/messages", status_code=201)
 async def create_message(room_id: str, data: MessageInput, token: ProfileToken = None):
     user = require_user(token)
-    require_room(room_id)
-    message, created = storage.add_message(room_id, user["id"], data.request_id, data.text)
+    require_room(room_id, user["id"])
+    message, created, recipients = storage.add_message(room_id, user["id"], data.request_id, data.text)
     if message["room_id"] != room_id or message["text"] != data.text:
         raise HTTPException(409, "Идентификатор отправки уже использован")
     if created:
-        await hub.publish({"type": "notification", "message": message}, exclude_user_id=user["id"])
+        await hub.publish({"type": "notification", "message": message}, user_ids=recipients)
         await hub.publish({"type": "message", "message": message}, room_id=room_id)
     return message
 
@@ -116,7 +158,7 @@ async def notifications(response: Response, token: ProfileToken = None):
 async def mark_notifications_read(data: ReadInput, token: ProfileToken = None):
     user = require_user(token)
     storage.mark_notifications_read(user["id"], data.message_id)
-    await hub.publish({"type": "notifications_changed"}, user_id=user["id"])
+    await hub.publish({"type": "notifications_changed"}, user_ids={user["id"]})
     return storage.notifications(user["id"])
 
 
@@ -139,7 +181,7 @@ async def events(socket: WebSocket):
     try:
         while True:
             room_id = await socket.receive_text()
-            if room_id == client.room_id or len(room_id) > 32 or not storage.room_exists(room_id):
+            if room_id == client.room_id or len(room_id) > 32 or not storage.can_access_room(room_id, user["id"]):
                 continue
             previous = client.room_id
             client.room_id = room_id

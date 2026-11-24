@@ -16,6 +16,15 @@ MESSAGE_SELECT = """
     FROM messages AS m JOIN users AS u ON u.id = m.sender_id
 """
 
+ROOM_SELECT = """
+    SELECT r.id, r.title, r.description, p.room_id IS NOT NULL AS is_private,
+           COALESCE(p.owner_id = ?, 0) AS can_invite
+    FROM rooms AS r
+    LEFT JOIN private_rooms AS p ON p.room_id = r.id
+    LEFT JOIN room_members AS m ON m.room_id = r.id AND m.user_id = ?
+    WHERE (p.room_id IS NULL OR m.user_id IS NOT NULL)
+"""
+
 
 class Storage:
     def __init__(self, path: Path):
@@ -42,6 +51,18 @@ class Storage:
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     description TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS private_rooms (
+                    room_id TEXT PRIMARY KEY REFERENCES rooms(id),
+                    owner_id INTEGER NOT NULL REFERENCES users(id),
+                    invite_token TEXT NOT NULL UNIQUE,
+                    request_id TEXT NOT NULL,
+                    UNIQUE (owner_id, request_id)
+                );
+                CREATE TABLE IF NOT EXISTS room_members (
+                    room_id TEXT NOT NULL REFERENCES private_rooms(room_id),
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    PRIMARY KEY (room_id, user_id)
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY,
@@ -82,13 +103,58 @@ class Storage:
             row = db.execute("SELECT id, name FROM users WHERE token_hash = ?", (token_hash,)).fetchone()
         return dict(row) if row else None
 
-    def rooms(self):
-        with self.connect() as db:
-            return [dict(row) for row in db.execute("SELECT id, title, description FROM rooms ORDER BY rowid")]
+    @staticmethod
+    def _room(row):
+        return {**dict(row), "is_private": bool(row["is_private"]), "can_invite": bool(row["can_invite"])}
 
-    def room_exists(self, room_id):
+    def rooms(self, user_id=None):
         with self.connect() as db:
-            return db.execute("SELECT 1 FROM rooms WHERE id = ?", (room_id,)).fetchone() is not None
+            rows = db.execute(ROOM_SELECT + " ORDER BY r.rowid", (user_id, user_id))
+            return [self._room(row) for row in rows]
+
+    def can_access_room(self, room_id, user_id):
+        with self.connect() as db:
+            return db.execute(ROOM_SELECT + " AND r.id = ?", (user_id, user_id, room_id)).fetchone() is not None
+
+    def create_room(self, owner_id, title, description, request_id):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                ROOM_SELECT + " AND p.owner_id = ? AND p.request_id = ?",
+                (owner_id, owner_id, owner_id, request_id),
+            ).fetchone()
+            if row is None:
+                room_id = secrets.token_hex(16)
+                db.execute("INSERT INTO rooms VALUES (?, ?, ?)", (room_id, title, description))
+                db.execute(
+                    "INSERT INTO private_rooms VALUES (?, ?, ?, ?)",
+                    (room_id, owner_id, secrets.token_urlsafe(32), request_id),
+                )
+                db.execute("INSERT INTO room_members VALUES (?, ?)", (room_id, owner_id))
+                row = db.execute(ROOM_SELECT + " AND r.id = ?", (owner_id, owner_id, room_id)).fetchone()
+            return self._room(row)
+
+    def room_invite(self, room_id, user_id):
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT invite_token FROM private_rooms WHERE room_id = ? AND owner_id = ?", (room_id, user_id)
+            ).fetchone()
+        return row["invite_token"] if row else None
+
+    def join_room(self, invite_token, user_id):
+        with self.connect() as db:
+            db.execute(
+                """
+                INSERT INTO room_members(room_id, user_id)
+                SELECT room_id, ? FROM private_rooms WHERE invite_token = ?
+                ON CONFLICT(room_id, user_id) DO NOTHING
+                """,
+                (user_id, invite_token),
+            )
+            row = db.execute(
+                ROOM_SELECT + " AND p.invite_token = ?", (user_id, user_id, invite_token)
+            ).fetchone()
+        return self._room(row) if row else None
 
     def history(self, room_id, before=None, limit=50):
         with self.connect() as db:
@@ -99,6 +165,7 @@ class Storage:
         return {"messages": [dict(row) for row in reversed(rows[:limit])], "has_older": len(rows) > limit}
 
     def add_message(self, room_id, sender_id, request_id, text):
+        recipients = set()
         with self.connect() as db:
             inserted = db.execute(
                 """
@@ -112,11 +179,20 @@ class Storage:
                 MESSAGE_SELECT + " WHERE m.sender_id = ? AND m.request_id = ?", (sender_id, request_id)
             ).fetchone()
             if inserted:
-                db.execute(
-                    "INSERT INTO notifications(user_id, message_id) SELECT id, ? FROM users WHERE id != ?",
-                    (message["id"], sender_id),
+                rows = db.execute(
+                    """
+                    INSERT INTO notifications(user_id, message_id)
+                    SELECT u.id, ? FROM users AS u
+                    WHERE u.id != ? AND (
+                        NOT EXISTS (SELECT 1 FROM private_rooms WHERE room_id = ?)
+                        OR EXISTS (SELECT 1 FROM room_members WHERE room_id = ? AND user_id = u.id)
+                    )
+                    RETURNING user_id
+                    """,
+                    (message["id"], sender_id, room_id, room_id),
                 )
-        return dict(message), inserted is not None
+                recipients = {row["user_id"] for row in rows}
+        return dict(message), inserted is not None, recipients
 
     def notifications(self, user_id):
         with self.connect() as db:

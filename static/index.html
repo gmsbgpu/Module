@@ -16,7 +16,10 @@
         <div><strong>Кампус БГПУ</strong><span>Общение</span></div>
       </div>
       <nav class="rooms" aria-label="Чаты кампуса">
-        <h2>Чаты кампуса</h2>
+        <div class="room-nav-heading">
+          <h2>Чаты кампуса</h2>
+          <button class="new-room" id="new-room" type="button" aria-label="Создать чат" aria-haspopup="dialog">+ Создать</button>
+        </div>
         <div id="rooms"></div>
       </nav>
       <div class="profile">
@@ -33,6 +36,7 @@
         </div>
         <div class="chat-actions">
           <span class="status" id="presence" role="status">Подключение…</span>
+          <button class="secondary invite-trigger" id="open-invite" type="button" aria-label="Пригласить по ссылке" aria-haspopup="dialog" hidden>Пригласить</button>
           <button class="secondary notification-trigger" id="open-notifications" type="button" aria-haspopup="dialog">
             <span class="notification-label">Уведомления</span>
             <span class="bell" aria-hidden="true"></span>
@@ -76,11 +80,60 @@
     <ol id="notice-list" class="notification-list"></ol>
   </dialog>
 
+  <dialog id="create-room-dialog" class="room-dialog" aria-labelledby="create-room-title">
+    <header class="notification-header">
+      <h2 id="create-room-title">Создать чат</h2>
+      <form method="dialog">
+        <button type="submit" class="secondary close-panel" aria-label="Закрыть">×</button>
+      </form>
+    </header>
+    <form id="create-room-form" class="room-dialog-body">
+      <p>К закрытому чату можно присоединиться по ссылке-приглашению.</p>
+      <label for="new-room-title">Название</label>
+      <input id="new-room-title" minlength="2" maxlength="60" placeholder="Например, Группа дипломников" required autofocus>
+      <label for="new-room-description">Описание (необязательно)</label>
+      <textarea id="new-room-description" maxlength="160" rows="2"></textarea>
+      <p id="create-room-error" class="inline-error" role="alert"></p>
+      <button class="primary" type="submit">Создать чат</button>
+    </form>
+  </dialog>
+
+  <dialog id="share-dialog" class="room-dialog" aria-labelledby="share-title">
+    <header class="notification-header">
+      <h2 id="share-title">Пригласить в чат</h2>
+      <form method="dialog">
+        <button type="submit" class="secondary close-panel" aria-label="Закрыть">×</button>
+      </form>
+    </header>
+    <div class="room-dialog-body">
+      <p>Любой, у кого есть эта ссылка, сможет вступить в чат.</p>
+      <label for="invite-url">Ссылка-приглашение</label>
+      <input id="invite-url" readonly>
+      <button class="primary" id="copy-invite" type="button" disabled>Скопировать ссылку</button>
+      <p id="share-status" role="status"></p>
+    </div>
+  </dialog>
+
+  <dialog id="join-dialog" class="room-dialog" aria-labelledby="join-title">
+    <header class="notification-header">
+      <h2 id="join-title">Приглашение в чат</h2>
+      <form method="dialog">
+        <button type="submit" class="secondary close-panel" aria-label="Закрыть">×</button>
+      </form>
+    </header>
+    <div class="room-dialog-body">
+      <p>Вступить в закрытый чат по этой ссылке?</p>
+      <p id="join-error" class="inline-error" role="alert"></p>
+      <button class="primary" id="join-room" type="button">Вступить</button>
+    </div>
+  </dialog>
+
   <main class="welcome" id="welcome">
     <section class="welcome-card">
       <span class="brand-mark" aria-hidden="true">Б</span>
       <h1>Кампус БГПУ</h1>
       <p>Общайтесь в чатах кампуса и возвращайтесь к переписке в любое время.</p>
+      <p id="welcome-invite" hidden>Создайте профиль, чтобы принять приглашение в чат.</p>
       <p class="inline-error" id="startup-error" role="alert"></p>
       <p id="starting" role="status">Загружаем кампус…</p>
       <form id="profile-form" hidden>

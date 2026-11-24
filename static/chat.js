@@ -37,6 +37,37 @@ function initials(name) {
   return name.split(/\s+/).slice(0, 2).map((part) => Array.from(part)[0]).join("").toUpperCase();
 }
 
+function newRequestId() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+    byte.toString(16).padStart(2, "0")).join("");
+}
+
+function addRoom(room) {
+  if (state.rooms.some((item) => item.id === room.id)) return;
+  state.rooms.push(room);
+
+  const button = element("button", "room-button");
+  button.type = "button";
+  button.dataset.roomId = room.id;
+  button.title = room.title;
+  button.setAttribute("aria-current", "false");
+  const symbol = element("span", "room-symbol", room.is_private ? "🔒" : "#");
+  symbol.setAttribute("aria-hidden", "true");
+  button.append(symbol, element("span", "room-label", room.title));
+  button.addEventListener("click", () => selectRoom(room.id));
+  $("rooms").append(button);
+}
+
+function inviteFromUrl() {
+  return new URLSearchParams(location.hash.slice(1)).get("invite");
+}
+
+function showJoinDialog() {
+  if (inviteFromUrl() === null || $("join-dialog").open) return;
+  $("join-error").textContent = "";
+  $("join-dialog").showModal();
+}
+
 function openApp(user) {
   state.user = user;
   $("profile-name").textContent = user.name;
@@ -44,18 +75,9 @@ function openApp(user) {
   $("welcome").hidden = true;
   $("app").hidden = false;
 
-  for (const room of state.rooms) {
-    const button = element("button", "room-button");
-    button.type = "button";
-    button.dataset.roomId = room.id;
-    const symbol = element("span", "room-symbol", "#");
-    symbol.setAttribute("aria-hidden", "true");
-    button.append(symbol, element("span", "", room.title));
-    button.addEventListener("click", () => selectRoom(room.id));
-    $("rooms").append(button);
-  }
   const previous = localStorage.getItem("campus.room");
   selectRoom(state.rooms.find((room) => room.id === previous)?.id ?? state.rooms[0].id);
+  showJoinDialog();
   refreshNotices();
   connect();
 }
@@ -64,6 +86,7 @@ function selectRoom(roomId) {
   if (state.selection?.roomId === roomId) return;
 
   const room = state.rooms.find((item) => item.id === roomId);
+  if (!room) return;
   const selection = { roomId, messages: new Map(), hasOlder: false, awaitingPresence: false };
   state.selection = selection;
   localStorage.setItem("campus.room", roomId);
@@ -73,6 +96,7 @@ function selectRoom(roomId) {
   }
   $("room-title").textContent = room.title;
   $("room-description").textContent = room.description;
+  $("open-invite").hidden = !room.can_invite;
   $("chat-error").textContent = "";
   $("message").value = state.drafts.get(roomId)?.text ?? "";
   $("messages").replaceChildren();
@@ -107,6 +131,7 @@ function connect() {
     state.retry = 750;
     subscribe();
     refreshNotices();
+    refreshRooms().catch(() => {});
   });
   socket.addEventListener("close", () => {
     setPresence("Переподключение…");
@@ -124,6 +149,7 @@ function connect() {
       }
     }
     if (data.type === "message") receiveMessage(data.message);
+    if (data.type === "room_available") addRoom(data.room);
     if (data.type === "notification") {
       showSystemNotice(data.message);
       refreshNotices();
@@ -135,6 +161,110 @@ function connect() {
 function messageUrl(roomId) {
   return `/api/rooms/${encodeURIComponent(roomId)}/messages`;
 }
+
+async function refreshRooms() {
+  const { rooms } = await api("/api/bootstrap");
+  rooms.forEach(addRoom);
+}
+
+const createRoomForm = $("create-room-form");
+let roomRequestId;
+let shareRequest;
+
+$("new-room").addEventListener("click", () => {
+  $("create-room-error").textContent = "";
+  $("create-room-dialog").showModal();
+});
+createRoomForm.addEventListener("input", () => { roomRequestId = null; });
+createRoomForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = createRoomForm.querySelector('button[type="submit"]');
+  const title = $("new-room-title").value.trim();
+  $("create-room-error").textContent = "";
+  if (Array.from(title).length < 2) {
+    $("create-room-error").textContent = "Введите название из двух или более символов.";
+    return;
+  }
+  button.disabled = true;
+  roomRequestId ??= newRequestId();
+  try {
+    const room = await api("/api/rooms", {
+      title,
+      description: $("new-room-description").value.trim(),
+      request_id: roomRequestId,
+    });
+    addRoom(room);
+    selectRoom(room.id);
+    createRoomForm.reset();
+    roomRequestId = null;
+    $("create-room-dialog").close();
+    shareInvite(room.id);
+  } catch (error) {
+    $("create-room-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+async function shareInvite(roomId) {
+  const request = Symbol();
+  shareRequest = request;
+  $("invite-url").value = "";
+  $("copy-invite").disabled = true;
+  $("share-status").textContent = "Загружаем ссылку…";
+  $("share-dialog").showModal();
+  try {
+    const { token } = await api(`/api/rooms/${encodeURIComponent(roomId)}/invite`);
+    if (shareRequest !== request || !$("share-dialog").open) return;
+    const url = new URL("/", location.href);
+    url.hash = new URLSearchParams({ invite: token }).toString();
+    $("invite-url").value = url.href;
+    $("copy-invite").disabled = false;
+    $("share-status").textContent = "";
+  } catch (error) {
+    if (shareRequest === request) $("share-status").textContent = error.message;
+  }
+}
+
+$("open-invite").addEventListener("click", () => shareInvite(state.selection.roomId));
+$("copy-invite").addEventListener("click", async () => {
+  const input = $("invite-url");
+  try {
+    await navigator.clipboard.writeText(input.value);
+    $("share-status").textContent = "Ссылка скопирована.";
+  } catch {
+    input.focus();
+    input.select();
+    $("share-status").textContent = "Скопируйте выделенную ссылку вручную.";
+  }
+});
+
+$("join-dialog").addEventListener("close", () => {
+  if (inviteFromUrl() !== null) history.replaceState(null, "", location.pathname + location.search);
+});
+$("join-room").addEventListener("click", async () => {
+  const token = inviteFromUrl();
+  $("join-error").textContent = "";
+  if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    $("join-error").textContent = "Проверьте ссылку-приглашение.";
+    return;
+  }
+  $("join-room").disabled = true;
+  try {
+    const room = await api("/api/rooms/join", { token });
+    addRoom(room);
+    selectRoom(room.id);
+    $("join-dialog").close();
+  } catch (error) {
+    $("join-error").textContent = error.message;
+  } finally {
+    $("join-room").disabled = false;
+  }
+});
+window.addEventListener("hashchange", () => {
+  if (state.user) showJoinDialog();
+  else $("welcome-invite").hidden = inviteFromUrl() === null;
+});
 
 function receiveMessage(message) {
   const selection = state.selection;
@@ -265,8 +395,16 @@ async function markRead(messageId = null) {
   }
 }
 
-function openNotice(roomId, messageId) {
+async function openNotice(roomId, messageId) {
   $("notifications").close();
+  if (!state.rooms.some((room) => room.id === roomId)) {
+    try {
+      await refreshRooms();
+    } catch {
+      $("chat-error").textContent = "Не удалось открыть чат.";
+      return;
+    }
+  }
   selectRoom(roomId);
   markRead(messageId);
 }
@@ -359,8 +497,7 @@ $("composer").addEventListener("submit", async (event) => {
   if (!text || state.sending) return;
 
   const draft = state.drafts.get(selection.roomId) ?? { text: input.value };
-  draft.requestId ??= Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
-    byte.toString(16).padStart(2, "0")).join("");
+  draft.requestId ??= newRequestId();
   state.drafts.set(selection.roomId, draft);
   state.sending = true;
   $("send").disabled = true;
@@ -402,9 +539,10 @@ $("profile-form").addEventListener("submit", async (event) => {
 async function start() {
   try {
     const data = await api("/api/bootstrap");
-    state.rooms = data.rooms;
+    data.rooms.forEach(addRoom);
     if (data.user) openApp(data.user);
     else {
+      $("welcome-invite").hidden = inviteFromUrl() === null;
       $("profile-form").hidden = false;
       $("name").focus();
     }
