@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#15213a">
+  <title>Кампус БГПУ — общение</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/chat.js" defer></script>
+</head>
+<body>
+  <main class="app" id="app" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">Б</span>
+        <div><strong>Кампус БГПУ</strong><span>Общение</span></div>
+      </div>
+      <nav class="rooms" aria-label="Чаты кампуса">
+        <h2>Чаты кампуса</h2>
+        <div id="rooms"></div>
+      </nav>
+      <div class="profile">
+        <span id="profile-avatar" class="avatar" aria-hidden="true"></span>
+        <div><strong id="profile-name"></strong><span>Ваш профиль</span></div>
+      </div>
+    </aside>
+
+    <section class="conversation" aria-labelledby="room-title">
+      <header class="chat-header">
+        <div>
+          <h1 id="room-title"></h1>
+          <p id="room-description"></p>
+        </div>
+        <div class="chat-actions">
+          <span class="status" id="presence" role="status">Подключение…</span>
+        </div>
+      </header>
+      <div class="timeline" id="timeline">
+        <button class="secondary older" id="older" type="button" hidden>Загрузить предыдущие</button>
+        <p class="empty" id="empty">Загружаем сообщения…</p>
+        <ol class="messages" id="messages" aria-label="Сообщения чата"></ol>
+      </div>
+      <footer class="composer-area">
+        <p class="inline-error" id="chat-error" role="alert"></p>
+        <form class="composer" id="composer">
+          <label class="visually-hidden" for="message">Сообщение</label>
+          <textarea id="message" rows="2" maxlength="2000" placeholder="Напишите сообщение…" required></textarea>
+          <button class="primary" id="send" type="submit">Отправить <span aria-hidden="true">↗</span></button>
+        </form>
+        <p class="keyboard-hint">Enter — отправить · Shift + Enter — новая строка</p>
+      </footer>
+    </section>
+  </main>
+
+  <main class="welcome" id="welcome">
+    <section class="welcome-card">
+      <span class="brand-mark" aria-hidden="true">Б</span>
+      <h1>Кампус БГПУ</h1>
+      <p>Общайтесь в чатах кампуса и возвращайтесь к переписке в любое время.</p>
+      <p class="inline-error" id="startup-error" role="alert"></p>
+      <p id="starting" role="status">Загружаем кампус…</p>
+      <form id="profile-form" hidden>
+        <label for="name">Как вас зовут?</label>
+        <input id="name" name="name" minlength="2" maxlength="40" placeholder="Например, Анна" required>
+        <button class="primary" type="submit">Открыть чаты <span aria-hidden="true">↗</span></button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
