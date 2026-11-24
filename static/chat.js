@@ -51,7 +51,7 @@ function addRoom(room) {
   button.dataset.roomId = room.id;
   button.title = room.title;
   button.setAttribute("aria-current", "false");
-  const symbol = element("span", "room-symbol", room.is_private ? "🔒" : "#");
+  const symbol = element("span", room.is_private ? "room-lock" : "room-symbol", room.is_private ? "" : "#");
   symbol.setAttribute("aria-hidden", "true");
   button.append(symbol, element("span", "room-label", room.title));
   button.addEventListener("click", () => selectRoom(room.id));
@@ -94,6 +94,7 @@ function selectRoom(roomId) {
   for (const button of $("rooms").children) {
     button.setAttribute("aria-current", String(button.dataset.roomId === roomId));
   }
+  $("rooms").querySelector('[aria-current="true"]').scrollIntoView({ block: "nearest", inline: "nearest" });
   $("room-title").textContent = room.title;
   $("room-description").textContent = room.description;
   $("open-invite").hidden = !room.can_invite;
